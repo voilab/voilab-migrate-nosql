@@ -16,6 +16,10 @@
     "migrate",
     "migration"
   ],
+  "dependencies": {
+    "async": "^1.4.2",
+    "lodash": "^3.10.0"
+  },
   "author": "Joël Poulin",
   "license": "MIT",
   "bugs": {
