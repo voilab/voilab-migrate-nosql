@@ -1,0 +1,178 @@
+/*jslint node: true, unparam: true, nomen: true */
+(function () {
+    'use strict';
+
+    var lodash = require('lodash'),
+        async = require('async'),
+
+        /**
+         * Some private stuffs
+         */
+
+        bucket = null,
+        config = {
+            typefield: "type",
+            versionfield: "version",
+            filenameSeparator: "::",
+            migrations_path: "../migrations/"
+        },
+        versions = {},
+        migrations = {},
+        dbGetCurrentVersion = function (type, callback) {
+            bucket.get(type + config.filenameSeparator + config.versionfield, function (err, doc) {
+                var version = 0;
+                if (!err) {
+                    version = doc.value.current;
+                }
+
+                versions[type] = version;
+
+                return callback(null, version);
+            });
+        },
+        saveDocument = function (record, documentId, callback) {
+            bucket.upsert(documentId, record, callback);
+        },
+
+        /**
+         * Method that actually pass your record through a migration function
+         *
+         * Important notice: Be aware that the migrations functions are organized within a directory
+         * that must contain subdirectories named after the record's types, each of
+         * them containing files named after the migrations version number (1.js, 2.js, 3.js, etc.)
+         *
+         * @param {Integer} version The migration version to call
+         * @param {Object} record The record to upgrade
+         * @param {String} documentId The record's document name
+         * @param callback
+         * @returns {*}
+         */
+        passMigration = function (version, record, documentId, callback) {
+            // caching migration functions
+            if (!lodash.isFunction(migrations[version])) {
+                migrations[version] = require(config.migrations_path + record[config.typefield] + '/' + version);
+            }
+
+            // migration function is called asynchronously
+            // Thus, it must pass the resulting record in a callback.
+            return migrations[version](record, function (err, newRecord) {
+                if (err) {
+                    return callback(err);
+                }
+                saveDocument(newRecord, documentId, function (err) {
+                    if (err) {
+                        return callback(err);
+                    }
+                    version += 1;
+                    callback(null, version, newRecord, documentId);
+                });
+            });
+        },
+
+
+        /**
+         * Public service
+         *
+         * @param {Bucket} appBucket A couchbase bucket
+         * @param {Object} [migrateConfig] A configuration object looking like this one:
+         *                  {
+         *                      typefield: "type",                 // fieldname in database documents that holds the document type
+         *                      versionfield: "version",           // fieldname in database documents that holds the version number
+         *                      filenameSeparator: "::",           // usually in a noSQL database, you name your documents using some separator
+         *                      migrations_path: "../migrations/", // path to migrations files from that library
+         *                      versions: {                        // optional: define here the up-to-date version number for each
+         *                          article: 1,                    //           document type. You can also omit this config and
+         *                          comment: 3                     //           manage your version numbers directly in the database
+         *                      }                                  //           in files named like [typefield][filenameSeparator][versionfield] and
+         *                  }                                      //           containing this kind of object: {"current": 3}
+         *
+         * @returns {{getCurrentVersion: service.getCurrentVersion, upgrade: service.upgrade}}
+         */
+        migrate = function (appBucket, migrateConfig) {
+
+            bucket = appBucket;
+            config = lodash.merge(config, (migrateConfig || {}));
+
+            var service = {
+
+                /**
+                 * Retrieve current (i.e. most up-to-date) version number for a record
+                 *
+                 * @param {Object} record
+                 * @param {Function} callback
+                 * @returns {*}
+                 */
+                getCurrentVersion: function (record, callback) {
+                    // if last versions numbers are defined directly in the configuration
+                    // the lib won't try to fetch them in the database.
+                    if (config.versions !== undefined) {
+                        return callback(null, (config.versions[record[config.typefield]] || 0));
+                    }
+
+                    // here we are in a 'versions count in database' mode. So we check our cache
+                    // first, and then, we try to get the version in the database and save it in the cache.
+                    if (versions[record[config.typefield]] !== undefined) {
+                        return callback(null, versions[record[config.typefield]]);
+                    }
+                    dbGetCurrentVersion(record[config.typefield], callback);
+                },
+
+                /**
+                 * Main method
+                 *
+                 * @param {Object} record The record to upgrade to the latest version
+                 * @param {String} documentId The document name (useful if you want to update your document :P)
+                 * @param {Function} callback The callback will be called with the upgraded record.
+                 */
+                upgrade: function (record, documentId, callback) {
+                    service.getCurrentVersion(record, function (err, lastVersion) {
+                        var docVersion = record[config.versionfield] || 0,
+                            i,
+                            tasks = [];
+
+                        // hint: getCurrentVersion cannot raise any error. Worst case, it returns 0.
+
+                        // in that case, there surely is absolutely nothing to do with that record...
+                        if (lastVersion === 0) {
+                            return callback(null, record);
+                        }
+
+                        // now if our record version (docVersion) is smaller than the up-to-date version,
+                        // we have to upgrade the record.
+                        if (docVersion < lastVersion) {
+                            docVersion += 1;
+                            for (i = docVersion; i <= lastVersion; i += 1) {
+                                // first pass
+                                if (i === docVersion) {
+                                    tasks.push(function (callback) {
+                                        passMigration(docVersion, record, documentId, callback);
+                                    });
+
+                                // subsequents passes
+                                } else {
+                                    tasks.push(passMigration);
+                                }
+                            }
+
+                            // async.waterfall ensure that each migration function is over, before the next migration occurs.
+                            // the next migration takes the record returned by the preceding migration as an argument.
+                            async.waterfall(tasks, function (err, version, record) {
+                                if (err) {
+                                    return callback(err);
+                                }
+                                callback(null, record);
+                            });
+
+                        // our record is up-to-date, let's return it.
+                        } else {
+                            callback(null, record);
+                        }
+                    });
+                }
+            };
+
+            return service;
+        };
+
+    module.exports = migrate;
+}());

@@ -1,0 +1,25 @@
+{
+  "name": "voilab-migrate-nosql",
+  "version": "0.1.0",
+  "description": "Library that handle fluid upgrades for your noSQL documents",
+  "main": "voilab-migrate-nosql.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/voilab/voilab-migrate-nosql.git"
+  },
+  "keywords": [
+    "nosql",
+    "couchbase",
+    "migrate",
+    "migration"
+  ],
+  "author": "Joël Poulin",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/voilab/voilab-migrate-nosql/issues"
+  },
+  "homepage": "https://github.com/voilab/voilab-migrate-nosql#readme"
+}
