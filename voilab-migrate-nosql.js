@@ -14,7 +14,8 @@
             typefield: "type",
             versionfield: "version",
             filenameSeparator: "::",
-            migrations_path: "../migrations/"
+            migrations_path: "../migrations/",
+            parallelLimit: 8
         },
         versions = {},
         migrations = {},
@@ -80,6 +81,7 @@
          *                      versionfield: "version",           // fieldname in database documents that holds the version number
          *                      filenameSeparator: "::",           // usually in a noSQL database, you name your documents using some separator
          *                      migrations_path: "../migrations/", // path to migrations files from that library
+         *                      parallelLimit: 8,                  // number of parallel upgrades in batch mode
          *                      versions: {                        // optional: define here the up-to-date version number for each
          *                          article: 1,                    //           document type. You can also omit this config and
          *                          comment: 3                     //           manage your version numbers directly in the database
@@ -118,7 +120,7 @@
                 },
 
                 /**
-                 * Main method
+                 * Main method. Upgrade one record.
                  *
                  * @param {Object} record The record to upgrade to the latest version
                  * @param {String} documentId The document name (useful if you want to update your document :P)
@@ -127,6 +129,7 @@
                 upgrade: function (record, documentId, callback) {
                     service.getCurrentVersion(record, function (err, lastVersion) {
                         var docVersion = record[config.versionfield] || 0,
+                            initialDocVersion = docVersion,
                             i,
                             tasks = [];
 
@@ -148,7 +151,7 @@
                                         passMigration(docVersion, record, documentId, callback);
                                     });
 
-                                // subsequents passes
+                                    // subsequents passes
                                 } else {
                                     tasks.push(passMigration);
                                 }
@@ -160,14 +163,56 @@
                                 if (err) {
                                     return callback(err);
                                 }
-                                callback(null, record);
+                                callback(null, record, (lastVersion - initialDocVersion));
                             });
 
-                        // our record is up-to-date, let's return it.
+                            // our record is up-to-date, let's return it.
                         } else {
-                            callback(null, record);
+                            return callback(null, record, 0);
                         }
                     });
+                },
+
+                /**
+                 * Batch mode. Upgrade all records returned by fetcher function.
+                 *
+                 * @param {Function} fetcher An asynchronous function that provide a callback with a View result.
+                 * @param callback
+                 */
+                batch: function (fetcher, callback) {
+                    fetcher(function (err, docs) {
+                        var tasks = lodash.map(docs, function (doc) {
+                            return function (callback) {
+
+                                // have to surround in a setTimeout block, because if there is no upgrade to do,
+                                // upgrade function is not asynchronous and if there is many successives synchronous calls
+                                // in an asynchronous context, like async.parallel, node is likely to crash with a stack overflow...
+                                setTimeout(function () {
+                                    service.upgrade(doc.doc, doc.id, function (err, record, nbMigrations) {
+                                        if (err) {
+                                            return callback(err);
+                                        }
+
+                                        callback(null, {
+                                            record: record,
+                                            nbMigrations: nbMigrations
+                                        });
+                                    });
+                                }, 0);
+                            };
+                        });
+                        async.parallelLimit(tasks, config.parallelLimit, function (err, result) {
+                            if (err) {
+                                return callback(err);
+                            }
+
+                            callback(null, {
+                                handled: result.length,
+                                upgraded: lodash.filter(result, function (r) { return r.nbMigrations > 0 }).length,
+                                total: lodash.reduce(result, function (sum, r) { return (sum + r.nbMigrations); }, 0)
+                            });
+                        });
+                    })
                 }
             };
 
