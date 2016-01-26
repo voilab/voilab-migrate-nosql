@@ -60,12 +60,13 @@
                 if (err) {
                     return callback(err);
                 }
+
                 saveDocument(newRecord, documentId, function (err) {
                     if (err) {
                         return callback(err);
                     }
-                    version += 1;
-                    callback(null, version, newRecord, documentId);
+
+                    callback(null, newRecord[config.versionfield], newRecord, documentId);
                 });
             });
         },
