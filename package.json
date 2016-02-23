@@ -1,6 +1,6 @@
 {
   "name": "voilab-migrate-nosql",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "Library that handle fluid upgrades for your noSQL documents",
   "main": "voilab-migrate-nosql.js",
   "scripts": {
@@ -17,8 +17,8 @@
     "migration"
   ],
   "dependencies": {
-    "async": "^1.4.2",
-    "lodash": "^3.10.0"
+    "async": "1.4.2",
+    "lodash": "4.*"
   },
   "author": "Joël Poulin",
   "license": "MIT",
