@@ -2,76 +2,6 @@
 (function () {
     'use strict';
 
-    var lodash = require('lodash'),
-        async = require('async'),
-
-        /**
-         * Some private stuffs
-         */
-
-        bucket = null,
-        config = {
-            typefield: "type",
-            versionfield: "version",
-            filenameSeparator: "::",
-            migrations_path: "../migrations/",
-            parallelLimit: 8
-        },
-        versions = {},
-        migrations = {},
-        dbGetCurrentVersion = function (type, callback) {
-            bucket.get(type + config.filenameSeparator + config.versionfield, function (err, doc) {
-                var version = 0;
-                if (!err) {
-                    version = doc.value.current;
-                }
-
-                versions[type] = version;
-
-                return callback(null, version);
-            });
-        },
-        saveDocument = function (record, documentId, callback) {
-            bucket.upsert(documentId, record, callback);
-        },
-
-        /**
-         * Method that actually pass your record through a migration function
-         *
-         * Important notice: Be aware that the migrations functions are organized within a directory
-         * that must contain subdirectories named after the record's types, each of
-         * them containing files named after the migrations version number (1.js, 2.js, 3.js, etc.)
-         *
-         * @param {Integer} version The migration version to call
-         * @param {Object} record The record to upgrade
-         * @param {String} documentId The record's document name
-         * @param callback
-         * @returns {*}
-         */
-        passMigration = function (version, record, documentId, callback) {
-            // caching migration functions
-            if (!lodash.isFunction(migrations[version])) {
-                migrations[version] = require(config.migrations_path + record[config.typefield] + '/' + version);
-            }
-
-            // migration function is called asynchronously
-            // Thus, it must pass the resulting record in a callback.
-            return migrations[version](record, function (err, newRecord) {
-                if (err) {
-                    return callback(err);
-                }
-
-                saveDocument(newRecord, documentId, function (err) {
-                    if (err) {
-                        return callback(err);
-                    }
-
-                    callback(null, newRecord[config.versionfield], newRecord, documentId);
-                });
-            });
-        },
-
-
         /**
          * Public service
          *
@@ -91,10 +21,73 @@
          *
          * @returns {{getCurrentVersion: service.getCurrentVersion, upgrade: service.upgrade}}
          */
-        migrate = function (appBucket, migrateConfig) {
+        var migrate = function (appBucket, migrateConfig) {
+            var lodash = require('lodash'),
+                async = require('async'),
 
-            bucket = appBucket;
-            config = lodash.merge(config, (migrateConfig || {}));
+                /**
+                 * Some private stuffs
+                 */
+                config = lodash.merge({
+                    typefield: "type",
+                    versionfield: "version",
+                    filenameSeparator: "::",
+                    migrations_path: "../migrations/",
+                    parallelLimit: 8
+                }, (migrateConfig || {})),
+                versions = {},
+                migrations = {},
+                dbGetCurrentVersion = function (type, callback) {
+                    appBucket.get(type + config.filenameSeparator + config.versionfield, function (err, doc) {
+                        var version = 0;
+                        if (!err) {
+                            version = doc.value.current;
+                        }
+
+                        versions[type] = version;
+
+                        return callback(null, version);
+                    });
+                },
+                saveDocument = function (record, documentId, callback) {
+                    appBucket.upsert(documentId, record, callback);
+                },
+
+                /**
+                 * Method that actually pass your record through a migration function
+                 *
+                 * Important notice: Be aware that the migrations functions are organized within a directory
+                 * that must contain subdirectories named after the record's types, each of
+                 * them containing files named after the migrations version number (1.js, 2.js, 3.js, etc.)
+                 *
+                 * @param {Integer} version The migration version to call
+                 * @param {Object} record The record to upgrade
+                 * @param {String} documentId The record's document name
+                 * @param callback
+                 * @returns {*}
+                 */
+                passMigration = function (version, record, documentId, callback) {
+                    // caching migration functions
+                    if (!lodash.isFunction(migrations[version])) {
+                        migrations[version] = require(config.migrations_path + record[config.typefield] + '/' + version);
+                    }
+
+                    // migration function is called asynchronously
+                    // Thus, it must pass the resulting record in a callback.
+                    return migrations[version](record, function (err, newRecord) {
+                        if (err) {
+                            return callback(err);
+                        }
+
+                        saveDocument(newRecord, documentId, function (err) {
+                            if (err) {
+                                return callback(err);
+                            }
+
+                            callback(null, newRecord[config.versionfield], newRecord, documentId);
+                        });
+                    });
+                };
 
             var service = {
 
